@@ -1,0 +1,17 @@
+torch
+torchvision
+torchaudio
+torch-geometric
+transformers
+accelerate
+diffusers
+opencv-python
+numpy
+omegaconf
+tqdm
+tensorboard
+scipy
+pyyaml
+# Grounding DINO 及其依赖通常需要从源码安装，这里列出基础依赖
+supervision
+matplotlib
