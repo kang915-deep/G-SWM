@@ -21,38 +21,58 @@ class SceneGraphBuilder(nn.Module):
     def get_detections(self, image, text_queries):
         """
         使用 Grounding DINO 获取物体框
-        image: PIL Image or Tensor
-        text_queries: str, e.g., "red block. blue tray."
         """
         inputs = self.processor(images=image, text=text_queries, return_tensors="pt").to(self.device)
         outputs = self.grounding_dino(**inputs)
         
-        # 处理输出获取 boxes 和 logits
-        target_sizes = torch.tensor([image.size[::-1]]) if not isinstance(image, torch.Tensor) else torch.tensor([image.shape[-2:]])
+        # 获取图像尺寸用于后处理和 Clamp
+        if isinstance(image, torch.Tensor):
+            height, width = image.shape[-2:]
+        else:
+            width, height = image.size
+
+        target_sizes = torch.tensor([[height, width]]).to(self.device)
         results = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=0.3,
-            text_threshold=0.3,
-            target_sizes=target_sizes.to(self.device)
+            threshold=0.3,
+            target_sizes=target_sizes
         )[0]
         
-        return results["boxes"], results["scores"], results["labels"]
+        boxes = results["boxes"]
+        # 强制 Clamp 坐标，防止微小浮点误差导致越界 (非常重要)
+        if boxes.shape[0] > 0:
+            boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(min=0, max=width)
+            boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(min=0, max=height)
+        
+        return boxes, results["scores"], results["labels"]
 
     def extract_node_features(self, image, boxes):
         """
         使用 DINOv2 提取每个 BBox 的特征
         """
-        # 简化版实现：对原图进行 DINOv2 推理，然后根据 ROI Pooling 或直接裁剪获取特征
-        # 这里为了演示，采用对每个 crop 进行特征提取
         node_features = []
+        _, h, w = image.shape if isinstance(image, torch.Tensor) else (3, image.size[1], image.size[0])
+        
         for box in boxes:
-            x1, y1, x2, y2 = box.int()
-            # 裁剪并缩放到 DINOv2 期望的大小 (通常是 224x224)
-            crop = image[:, :, y1:y2, x1:x2]
-            crop = F.interpolate(crop, size=(224, 224), mode='bilinear', align_corners=False)
+            x1, y1, x2, y2 = box.int().tolist()
             
-            feat = self.dinov2(crop) # [1, 384] for vit-s
+            # 极端情况兜底：确保裁剪尺寸至少为 1 像素且在图像范围内
+            x1, x2 = max(0, x1), min(w, x2)
+            y1, y2 = max(0, y1), min(h, y2)
+            if x2 <= x1: x2 = x1 + 1
+            if y2 <= y1: y2 = y1 + 1
+            
+            crop = image[:, y1:y2, x1:x2]
+            
+            # 如果裁剪后依然为空，补零
+            if crop.numel() == 0:
+                feat = torch.zeros((1, 384), device=self.device)
+            else:
+                crop_resized = F.interpolate(crop.unsqueeze(0), size=(224, 224), 
+                                            mode='bilinear', align_corners=False)
+                feat = self.dinov2(crop_resized)
+                
             node_features.append(feat)
             
         return torch.cat(node_features, dim=0) if node_features else torch.empty(0, 384).to(self.device)

@@ -2,6 +2,8 @@ import os
 import torch
 import torch.distributed as dist
 
+import datetime
+
 def setup_distributed():
     """
     初始化分布式环境 (DDP)
@@ -17,8 +19,13 @@ def setup_distributed():
     torch.cuda.set_device(gpu)
     dist_backend = 'nccl'
     print(f'| distributed init (rank {rank}): {dist_backend}', flush=True)
-    dist.init_process_group(backend=dist_backend, init_method='env://',
-                            world_size=world_size, rank=rank)
+    dist.init_process_group(
+        backend=dist_backend, 
+        init_method='env://',
+        world_size=world_size, 
+        rank=rank,
+        timeout=datetime.timedelta(seconds=3600)
+    )
     dist.barrier()
     return True, rank, world_size, gpu
 

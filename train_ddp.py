@@ -31,12 +31,13 @@ def train():
         batch_size=args.batch_size, 
         shuffle=(sampler is None),
         sampler=sampler,
-        num_components=4 # 远程服务器通常有多核 CPU
+        num_workers=4 
     )
 
     # 3. 初始化模型
     model = GSWM(device=device).to(device)
     if is_dist:
+        # 使用 find_unused_parameters=True 应对 GNN 中可能存在的未激活路径
         model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
